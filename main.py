@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 import requests
 import os
 import uvicorn
-from huggingface_hub import InferenceClient
 
 # ======================================================
 # 1. Konfigurasi Awal & Model
@@ -19,40 +18,24 @@ if not TELEGRAM_TOKEN or not HF_TOKEN:
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
-# Model AI untuk Penghalusan Teks (Diganti ke Mistral untuk stabilitas)
+# API Endpoint Hugging Face (Inference API)
+HF_API_BASE_URL = "https://api-inference.huggingface.co/models"
+
+# Model AI untuk Penghalusan Teks
 HF_MODEL_LLM = "mistralai/Mistral-7B-Instruct-v0.2" 
 # Model AI untuk Transkripsi Audio
 HF_MODEL_ASR = "openai/whisper-tiny"
 
-# --- LOGIKA INFERENCET CLIENT DAN DEBUGGING KONEKSI ---
-hf_client = None
-try:
-    if HF_TOKEN:
-        # Panggil InferenceClient hanya jika token ditemukan
-        hf_client = InferenceClient(api_key=HF_TOKEN)
-        
-        # UJI KONEKSI SEDERHANA: Coba panggil model yang sangat kecil
-        test_result = hf_client.text_generation(
-            model="hf-internal-testing/tiny-random-falcon",
-            prompt="Hello",
-            max_new_tokens=1
-        )
-        print("✅ HF Client Test Berhasil. Koneksi API berfungsi.")
-    else:
-        print("❌ HF_TOKEN TIDAK DITEMUKAN DI LINGKUNGAN.")
-
-except Exception as e:
-    hf_client = None
-    print(f"❌ Error fatal saat inisialisasi InferenceClient dan tes koneksi: {e}")
-# -----------------------------------------------------------------------
-
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://your-default-url.com")
 WEBHOOK_URL = WEBHOOK_BASE_URL + "/webhook"
 
+# Header Otentikasi untuk API Hugging Face
+HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
 # ======================================================
-# 2. Fungsi Pembantu: Mengirim Pesan
+# 2. Fungsi Pembantu
 # ======================================================
+
 def send_telegram_message(chat_id, text):
     """Fungsi sederhana untuk mengirim pesan ke Telegram."""
     try:
@@ -62,6 +45,37 @@ def send_telegram_message(chat_id, text):
         )
     except Exception as e:
         print(f"Failed to send message: {e}")
+
+def run_hf_inference(model_id, data, is_audio=False):
+    """Mengirim request POST langsung ke Hugging Face Inference API."""
+    
+    url = f"{HF_API_BASE_URL}/{model_id}"
+    
+    if is_audio:
+        # Untuk Audio (ASR): Kirim data biner (content)
+        response = requests.post(url, headers=HF_HEADERS, data=data)
+        
+        if response.status_code == 200:
+            return response.json().get('text', '')
+        else:
+            raise Exception(f"HF ASR Error (Code {response.status_code}): {response.text}")
+    
+    else:
+        # Untuk Teks (LLM): Kirim data JSON
+        payload = {
+            "inputs": data,
+            "parameters": {
+                "max_new_tokens": 200, 
+                "temperature": 0.8
+            }
+        }
+        response = requests.post(url, headers=HF_HEADERS, json=payload)
+        
+        if response.status_code == 200:
+            # Output LLM dari Inference API adalah list of dicts
+            return response.json()[0]['generated_text']
+        else:
+            raise Exception(f"HF LLM Error (Code {response.status_code}): {response.text}")
 
 
 # ======================================================
@@ -79,19 +93,23 @@ async def telegram_webhook(request: Request):
 
     message = data["message"]
     chat_id = message["chat"]["id"]
-    
     input_text = ""
+    
+    if not HF_TOKEN:
+        send_telegram_message(chat_id, "❌ Koneksi HF gagal: HF_TOKEN belum disetel.")
+        return {"ok": True}
     
     # --- A. Mendapatkan Teks Input (dari Teks atau Audio) ---
     
     if "text" in message:
         input_text = message["text"]
     
-    elif "voice" in message and hf_client:
+    elif "voice" in message:
         
-        send_telegram_message(chat_id, "⏳ Menerima senandung Anda... sedang ditranskripsi menjadi teks.")
+        send_telegram_message(chat_id, "⏳ Menerima senandung... sedang ditranskripsi menjadi teks.")
         
         try:
+            # Logika Transkripsi Audio (ASR)
             voice_data = message["voice"]
             file_id = voice_data["file_id"]
 
@@ -101,49 +119,39 @@ async def telegram_webhook(request: Request):
             audio_url = f"{TELEGRAM_FILE_API}/{file_path}"
             audio_content = requests.get(audio_url).content
             
-            transcription_result = hf_client.automatic_speech_recognition(
-                model=HF_MODEL_ASR,
-                data=audio_content
-            )
-            
-            input_text = transcription_result.get('text', '').strip()
+            # Panggil fungsi inferensi ASR
+            transcribed_text = run_hf_inference(HF_MODEL_ASR, audio_content, is_audio=True)
+            input_text = transcribed_text.strip()
             
             send_telegram_message(chat_id, f"✅ Transkripsi berhasil. Teks: *{input_text}*.\nSekarang diproses untuk penghalusan melodi...")
             
         except Exception as e:
-            error_msg = f"❌ Gagal memproses audio dengan {HF_MODEL_ASR}. Detail: {e}"
+            error_msg = f"❌ Gagal memproses audio. Detail: {e}"
             send_telegram_message(chat_id, error_msg)
             return {"ok": True}
 
 
     # --- B. Logika LLM: Memperhalus Teks Input ---
     
-    if input_text and hf_client:
+    if input_text:
         try:
-            # Prompt yang dioptimalkan untuk 'Melodi Indah'
+            # Prompt yang dioptimalkan untuk LLM
             prompt = (
                 f"Anda adalah komposer musik AI. Perhalus melodi humming/siulan ini menjadi melodi indah yang merdu, "
-                f"berikan output hanya dalam bentuk notasi musik sederhana atau urutan humming yang diperbaiki. \n"
+                f"berikan output hanya dalam bentuk urutan nada (misal: do re mi) atau humming yang diperbaiki. \n"
                 f"Melodi asli: {input_text}\n"
                 f"Melodi yang diperindah:"
             )
 
-            response = hf_client.text_generation(
-                model=HF_MODEL_LLM, 
-                prompt=prompt,
-                max_new_tokens=200, 
-                temperature=0.8
-            )
-            
-            generated_text = response.strip()
+            # Panggil fungsi inferensi LLM
+            generated_text = run_hf_inference(HF_MODEL_LLM, prompt, is_audio=False)
+            generated_text = generated_text.strip()
 
         except Exception as e:
+            # Detail error dari HTTP request
             generated_text = f"❌ Error pemrosesan LLM: Gagal menghubungi model {HF_MODEL_LLM}. Detail: {e}"
 
         send_telegram_message(chat_id, generated_text)
-        
-    elif not hf_client:
-        send_telegram_message(chat_id, "❌ Bot sedang tidak dapat memproses AI. Koneksi Hugging Face gagal saat startup.")
         
     return {"ok": True}
 
@@ -153,11 +161,12 @@ async def telegram_webhook(request: Request):
 # ======================================================
 @app.get("/")
 async def root():
+    # Cek koneksi di sini bersifat pasif, hanya di webhook yang aktif
     return {"message": f"Bot aktif 🔥 Menggunakan model LLM: {HF_MODEL_LLM}, ASR: {HF_MODEL_ASR}", "status": "running"}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "hf_client_ready": hf_client is not None}
+    return {"status": "ok", "hf_token_set": HF_TOKEN is not None}
 
 @app.get("/set_webhook")
 async def set_webhook():
