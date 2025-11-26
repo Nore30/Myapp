@@ -22,11 +22,11 @@ TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
 # --- PERBAIKAN URL & NAMA MODEL YANG BERHASIL MENGATASI ERROR ---
 # URL API Hugging Face yang terbaru (mengatasi Error 410)
-HF_API_BASE_URL = "https://router.huggingface.co/models" 
+HF_API_BASE_URL = "https://api-inference.huggingface.co/models" 
 # Nama Model LLM (diperbaiki dari mistralai/Mistral-7B-Instruct-v0.2 menjadi nama model saja)
 HF_MODEL_LLM = "tiiuae/falcon-7b-instruct"
 # Model AI untuk Transkripsi Audio
-HF_MODEL_ASR = "openai/whisper-tiny"
+HF_MODEL_ASR = "facebook/wav2vec2-base-960h"
 # ------------------------------------------------------------------
 
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://your-default-url.com")
