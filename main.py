@@ -6,9 +6,9 @@ import os
 app = FastAPI()
 
 # ======================================================
-# MASUKKAN TOKEN BOT TELEGRAM DI SINI
+# TOKEN BOT TELEGRAM
 # ======================================================
-TELEGRAM_TOKEN = "8386697150:AAEMLVEUPtozaSjxQJ5dLPNRn9r_dLrOhjo"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # ambil dari env
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 # URL Railway kamu
@@ -24,7 +24,7 @@ async def root():
 
 
 # ======================================================
-# HEALTH (dibutuhkan Railway)
+# HEALTH
 # ======================================================
 @app.get("/health")
 async def health():
@@ -32,17 +32,17 @@ async def health():
 
 
 # ======================================================
-# WEBHOOK — menerima update dari Telegram
+# WEBHOOK — menerima update Telegram
 # ======================================================
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
 
-        # Balasan sederhana
+    if chat_id:
         reply = f"Kamu bilang: {text}"
 
         requests.get(
@@ -54,48 +54,16 @@ async def telegram_webhook(request: Request):
 
 
 # ======================================================
-# SET WEBHOOK — panggil sekali
+# SET WEBHOOK
 # ======================================================
 @app.get("/set_webhook")
 async def set_webhook():
-    set_webhook_url = f"{TELEGRAM_API}/setWebhook?url={WEBHOOK_URL}"
-    result = requests.get(set_webhook_url).json()
-    return result
+    url = f"{TELEGRAM_API}/setWebhook?url={WEBHOOK_URL}"
+    return requests.get(url).json()
 
 
 # ======================================================
-# LOCAL RUN
+# RUN LOCAL
 # ======================================================
-if __name__ == "__main__":
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8000))
-    )        text = data["message"].get("text", "")
-
-        # Balasan otomatis
-        reply = f"Kamu bilang: {text}"
-
-        requests.get(f"{TELEGRAM_API}/sendMessage", params={
-            "chat_id": chat_id,
-            "text": reply
-        })
-
-    return {"ok": True}
-
-# ==============================
-#  SET WEBHOOK MANUAL
-# ==============================
-@app.get("/set_webhook")
-async def set_webhook():
-    # Ganti URL kamu sendiri dari Railway
-    WEBHOOK_URL = "https://your-railway-url.up.railway.app/webhook"
-
-    r = requests.get(f"{TELEGRAM_API}/setWebhook?url={WEBHOOK_URL}")
-    return r.json()
-
-# ==============================
-#  RUN LOCAL
-# ==============================
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
