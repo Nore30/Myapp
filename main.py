@@ -9,25 +9,23 @@ import uvicorn
 
 app = FastAPI()
 
-# Ambil token dari Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")  
 
 if not TELEGRAM_TOKEN or not HF_TOKEN:
     print("WARNING: TELEGRAM_TOKEN atau HF_TOKEN belum disetel!")
 
-# URL API Telegram
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
-# --- PERBAIKAN URL & NAMA MODEL YANG BERHASIL MENGATASI ERROR ---
-# URL API Hugging Face yang terbaru (mengatasi Error 410)
+# --- URL & MODEL BARU ---
+# URL API Hugging Face standar (paling stabil untuk model ASR dan Falcon)
 HF_API_BASE_URL = "https://api-inference.huggingface.co/models" 
-# Nama Model LLM (diperbaiki dari mistralai/Mistral-7B-Instruct-v0.2 menjadi nama model saja)
-HF_MODEL_LLM = "tiiuae/falcon-7b-instruct"
-# Model AI untuk Transkripsi Audio
-HF_MODEL_ASR = "facebook/wav2vec2-base-960h"
-# ------------------------------------------------------------------
+# Model LLM yang stabil
+HF_MODEL_LLM = "tiiuae/falcon-7b-instruct" 
+# Model ASR terbaik untuk lirik
+HF_MODEL_ASR = "openai/whisper-tiny" 
+# ------------------------
 
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://your-default-url.com")
 WEBHOOK_URL = WEBHOOK_BASE_URL + "/webhook"
@@ -55,7 +53,6 @@ def run_hf_inference(model_id, data, is_audio=False):
     url = f"{HF_API_BASE_URL}/{model_id}"
     
     if is_audio:
-        # Untuk Audio (ASR): Kirim data biner (content)
         response = requests.post(url, headers=HF_HEADERS, data=data)
         
         if response.status_code == 200:
@@ -64,21 +61,18 @@ def run_hf_inference(model_id, data, is_audio=False):
             raise Exception(f"HF ASR Error (Code {response.status_code}): {response.text}")
     
     else:
-        # Untuk Teks (LLM): Kirim data JSON
         payload = {
             "inputs": data,
             "parameters": {
-                "max_new_tokens": 200, 
-                "temperature": 0.8
+                "max_new_tokens": 500, # Diperpanjang untuk lirik
+                "temperature": 0.5     # Diturunkan agar lebih fokus pada chord
             }
         }
         response = requests.post(url, headers=HF_HEADERS, json=payload)
         
         if response.status_code == 200:
-            # Output LLM dari Inference API adalah list of dicts
             return response.json()[0]['generated_text']
         else:
-            # Ini akan menangkap error seperti 404, 401, atau 5xx
             raise Exception(f"HF LLM Error (Code {response.status_code}): {response.text}")
 
 
@@ -87,6 +81,7 @@ def run_hf_inference(model_id, data, is_audio=False):
 # ======================================================
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
+    # ... (Penanganan data masuk tetap sama)
     try:
         data = await request.json()
     except Exception:
@@ -107,10 +102,11 @@ async def telegram_webhook(request: Request):
     
     if "text" in message:
         input_text = message["text"]
+        send_telegram_message(chat_id, f"Memproses teks Anda ({input_text}) menjadi lirik dan chord...")
     
     elif "voice" in message:
         
-        send_telegram_message(chat_id, "⏳ Menerima senandung... sedang ditranskripsi menjadi teks.")
+        send_telegram_message(chat_id, "⏳ Menerima audio... sedang ditranskripsi menjadi lirik.")
         
         try:
             # Logika Transkripsi Audio (ASR)
@@ -123,11 +119,11 @@ async def telegram_webhook(request: Request):
             audio_url = f"{TELEGRAM_FILE_API}/{file_path}"
             audio_content = requests.get(audio_url).content
             
-            # Panggil fungsi inferensi ASR
+            # Panggil fungsi inferensi ASR untuk mendapatkan lirik
             transcribed_text = run_hf_inference(HF_MODEL_ASR, audio_content, is_audio=True)
             input_text = transcribed_text.strip()
             
-            send_telegram_message(chat_id, f"✅ Transkripsi berhasil. Teks: *{input_text}*.\nSekarang diproses untuk penghalusan melodi...")
+            send_telegram_message(chat_id, f"✅ Transkripsi lirik berhasil. Teks: *{input_text}*.\nSekarang diproses untuk menentukan chord...")
             
         except Exception as e:
             error_msg = f"❌ Gagal memproses audio. Detail: {e}"
@@ -135,19 +131,19 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
 
 
-    # --- B. Logika LLM: Memperhalus Teks Input ---
+    # --- B. Logika LLM: Mengubah Teks menjadi Lirik dan Chord ---
     
     if input_text:
         try:
-            # Prompt yang dioptimalkan untuk LLM
+            # Prompt yang dioptimalkan untuk menghasilkan Chord dan Lirik
             prompt = (
-                f"Anda adalah komposer musik AI. Perhalus melodi humming/siulan ini menjadi melodi indah yang merdu, "
-                f"berikan output hanya dalam bentuk urutan nada (misal: do re mi) atau humming yang diperbaiki. \n"
-                f"Melodi asli: {input_text}\n"
-                f"Melodi yang diperindah:"
+                f"Anda adalah seorang transkrip musik profesional. Tugas Anda adalah menentukan chord yang paling sesuai "
+                f"dengan melodi yang dinyanyikan/diucapkan dalam lirik ini. Tambahkan urutan chord gitar sederhana (misal: C, G, Am, F) "
+                f"di atas setiap baris lirik yang sudah disempurnakan. \n"
+                f"Lirik hasil transkripsi: {input_text}\n"
+                f"Format Output (Chord dan Lirik):"
             )
 
-            # Panggil fungsi inferensi LLM
             generated_text = run_hf_inference(HF_MODEL_LLM, prompt, is_audio=False)
             generated_text = generated_text.strip()
 
@@ -160,7 +156,7 @@ async def telegram_webhook(request: Request):
 
 
 # ======================================================
-# 4. Endpoints Info dan Set Webhook
+# 4. Endpoints Info dan Set Webhook (Tetap sama)
 # ======================================================
 @app.get("/")
 async def root():
@@ -190,3 +186,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+    
