@@ -18,8 +18,9 @@ if not TELEGRAM_TOKEN or not HF_TOKEN:
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
-# API Endpoint Hugging Face (Inference API)
-HF_API_BASE_URL = "https://api-inference.huggingface.co/models"
+# --- PERBAIKAN URL PENTING: Menggunakan router.huggingface.co ---
+HF_API_BASE_URL = "https://router.huggingface.co/models" 
+# ----------------------------------------------------------------
 
 # Model AI untuk Penghalusan Teks
 HF_MODEL_LLM = "mistralai/Mistral-7B-Instruct-v0.2" 
@@ -52,7 +53,6 @@ def run_hf_inference(model_id, data, is_audio=False):
     url = f"{HF_API_BASE_URL}/{model_id}"
     
     if is_audio:
-        # Untuk Audio (ASR): Kirim data biner (content)
         response = requests.post(url, headers=HF_HEADERS, data=data)
         
         if response.status_code == 200:
@@ -61,7 +61,6 @@ def run_hf_inference(model_id, data, is_audio=False):
             raise Exception(f"HF ASR Error (Code {response.status_code}): {response.text}")
     
     else:
-        # Untuk Teks (LLM): Kirim data JSON
         payload = {
             "inputs": data,
             "parameters": {
@@ -72,7 +71,6 @@ def run_hf_inference(model_id, data, is_audio=False):
         response = requests.post(url, headers=HF_HEADERS, json=payload)
         
         if response.status_code == 200:
-            # Output LLM dari Inference API adalah list of dicts
             return response.json()[0]['generated_text']
         else:
             raise Exception(f"HF LLM Error (Code {response.status_code}): {response.text}")
@@ -135,7 +133,6 @@ async def telegram_webhook(request: Request):
     
     if input_text:
         try:
-            # Prompt yang dioptimalkan untuk LLM
             prompt = (
                 f"Anda adalah komposer musik AI. Perhalus melodi humming/siulan ini menjadi melodi indah yang merdu, "
                 f"berikan output hanya dalam bentuk urutan nada (misal: do re mi) atau humming yang diperbaiki. \n"
@@ -148,7 +145,6 @@ async def telegram_webhook(request: Request):
             generated_text = generated_text.strip()
 
         except Exception as e:
-            # Detail error dari HTTP request
             generated_text = f"❌ Error pemrosesan LLM: Gagal menghubungi model {HF_MODEL_LLM}. Detail: {e}"
 
         send_telegram_message(chat_id, generated_text)
@@ -161,7 +157,6 @@ async def telegram_webhook(request: Request):
 # ======================================================
 @app.get("/")
 async def root():
-    # Cek koneksi di sini bersifat pasif, hanya di webhook yang aktif
     return {"message": f"Bot aktif 🔥 Menggunakan model LLM: {HF_MODEL_LLM}, ASR: {HF_MODEL_ASR}", "status": "running"}
 
 @app.get("/health")
@@ -188,3 +183,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+    
