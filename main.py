@@ -24,7 +24,7 @@ TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 # URL API Hugging Face yang terbaru (mengatasi Error 410)
 HF_API_BASE_URL = "https://router.huggingface.co/models" 
 # Nama Model LLM (diperbaiki dari mistralai/Mistral-7B-Instruct-v0.2 menjadi nama model saja)
-HF_MODEL_LLM = "gemma-7b-it"
+HF_MODEL_LLM = "gemma-2b-it"
 # Model AI untuk Transkripsi Audio
 HF_MODEL_ASR = "openai/whisper-tiny"
 # ------------------------------------------------------------------
