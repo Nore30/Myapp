@@ -18,14 +18,11 @@ if not TELEGRAM_TOKEN or not HF_TOKEN:
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
-# --- URL & MODEL BARU ---
-# URL API Hugging Face standar (paling stabil untuk model ASR dan Falcon)
+# --- URL & MODEL KONFIGURASI ---
 HF_API_BASE_URL = "https://api-inference.huggingface.co/models" 
-# Model LLM yang stabil
 HF_MODEL_LLM = "tiiuae/falcon-7b-instruct" 
-# Model ASR terbaik untuk lirik
 HF_MODEL_ASR = "openai/whisper-tiny" 
-# ------------------------
+# -------------------------------
 
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://your-default-url.com")
 WEBHOOK_URL = WEBHOOK_BASE_URL + "/webhook"
@@ -61,17 +58,36 @@ def run_hf_inference(model_id, data, is_audio=False):
             raise Exception(f"HF ASR Error (Code {response.status_code}): {response.text}")
     
     else:
+        # Untuk Teks (LLM): Kirim data JSON
         payload = {
             "inputs": data,
             "parameters": {
-                "max_new_tokens": 500, # Diperpanjang untuk lirik
-                "temperature": 0.5     # Diturunkan agar lebih fokus pada chord
+                "max_new_tokens": 200, # Dikurangi agar lebih cepat
+                "temperature": 0.5     
             }
         }
         response = requests.post(url, headers=HF_HEADERS, json=payload)
         
         if response.status_code == 200:
-            return response.json()[0]['generated_text']
+            response_json = response.json()
+            
+            # --- PENANGANAN RESPONS YANG KUAT ---
+            # 1. Respons Sukses (List of dicts)
+            if isinstance(response_json, list) and len(response_json) > 0 and 'generated_text' in response_json[0]:
+                 return response_json[0]['generated_text']
+                 
+            # 2. Respons Model Sedang Memuat/Antri (Dict dengan estimated_time)
+            elif isinstance(response_json, dict) and 'estimated_time' in response_json:
+                raise Exception(f"Model sedang memuat/antri (Est. time: {response_json['estimated_time']:.2f} detik). Coba lagi dalam 30 detik.")
+                
+            # 3. Respons Gagal/Error (Dict dengan error message)
+            elif isinstance(response_json, dict) and 'error' in response_json:
+                raise Exception(f"HF Inference Error: {response_json['error']}")
+            
+            # 4. Format Tidak Diketahui
+            else:
+                 raise Exception(f"Format respons LLM tidak terduga: {response.text}")
+            
         else:
             raise Exception(f"HF LLM Error (Code {response.status_code}): {response.text}")
 
@@ -81,7 +97,6 @@ def run_hf_inference(model_id, data, is_audio=False):
 # ======================================================
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    # ... (Penanganan data masuk tetap sama)
     try:
         data = await request.json()
     except Exception:
@@ -148,6 +163,7 @@ async def telegram_webhook(request: Request):
             generated_text = generated_text.strip()
 
         except Exception as e:
+            # Jika ada error, error tersebut akan ditangkap di sini dan dikirimkan ke user.
             generated_text = f"❌ Error pemrosesan LLM: Gagal menghubungi model {HF_MODEL_LLM}. Detail: {e}"
 
         send_telegram_message(chat_id, generated_text)
